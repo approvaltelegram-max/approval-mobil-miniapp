@@ -227,15 +227,32 @@
           choiceWrap.hidden = true;
         }
         fillReturnDetails(returnRequests[0]);
-        returnForm.addEventListener('submit', event => submitForm(event, returnForm, document.getElementById('return-submit'), 'submitReturn'));
+        wireFormSubmit(returnForm, document.getElementById('return-submit'), 'submitReturn');
         return;
       }
       document.getElementById('page-title').textContent = 'Pengajuan Pemakaian Mobil';
       document.getElementById('page-intro').textContent = 'Isi data perjalanan, lalu periksa sebelum dikirim untuk persetujuan.';
       requestForm.hidden = false;
       returnForm.hidden = true;
-      requestForm.addEventListener('submit', event => submitForm(event, document.getElementById('submit'), 'submitRequest'));
+      wireFormSubmit(requestForm, document.getElementById('submit'), 'submitRequest');
       loadAvailableCars();
+    }
+    function wireFormSubmit(formElement, buttonElement, action) {
+      if (formElement.dataset.submitWired === 'true') return;
+      formElement.dataset.submitWired = 'true';
+      // Handle the visible button directly so Telegram WebView gives clear
+      // feedback when any required field has not been completed.
+      buttonElement.type = 'button';
+      const submit = event => {
+        event.preventDefault();
+        if (!formElement.reportValidity()) {
+          showMessage('Mohon lengkapi semua kolom wajib sebelum mengirim.', true);
+          return;
+        }
+        submitForm(event, formElement, buttonElement, action);
+      };
+      buttonElement.addEventListener('click', submit);
+      formElement.addEventListener('submit', submit);
     }
     function fillReturnDetails(item) {
       if (!item) return;
