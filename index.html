@@ -101,8 +101,18 @@
     let pendingButton = null;
     let flowNonce = '';
     let flowTimer = null;
+    let flowPending = false;
 
     iframe.addEventListener('load', () => {
+      if (flowPending) {
+        const loadingNonce = flowNonce;
+        setTimeout(() => {
+          if (!flowPending || flowNonce !== loadingNonce) return;
+          flowPending = false;
+          clearTimeout(flowTimer);
+          showState('Apps Script belum mengirim status. Pastikan Code.gs terbaru sudah disimpan dan deploy ulang sebagai versi baru, termasuk izin akses “Anyone”.', true);
+        }, 800);
+      }
       if (!submissionPending) return;
       submissionPending = false;
       showMessage('Permintaan sudah diteruskan. Periksa grup untuk memastikan proses berhasil atau melihat alasan jika gagal.');
@@ -117,6 +127,7 @@
       if (!iframe.contentWindow || event.source !== iframe.contentWindow) return;
       const data = event.data;
       if (!data || data.type !== 'vehicleApprovalFlow' || data.nonce !== flowNonce) return;
+      flowPending = false;
       clearTimeout(flowTimer);
       if (!data.result || !data.result.ok) {
         showState(data.result && data.result.error ? data.result.error : 'Status pengajuan tidak dapat dimuat.', true);
@@ -152,6 +163,7 @@
         return;
       }
       flowNonce = newNonce();
+      flowPending = true;
       actionInput.value = 'getMyFlow';
       initDataInput.value = tg.initData;
       formDataInput.value = '';
