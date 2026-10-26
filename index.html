@@ -124,8 +124,10 @@
     });
 
     window.addEventListener('message', event => {
-      if (!iframe.contentWindow || event.source !== iframe.contentWindow) return;
       const data = event.data;
+      // Apps Script may wrap its response in an additional sandbox frame, so
+      // the sender is not always iframe.contentWindow. The one-time nonce
+      // binds the response to this exact request.
       if (!data || data.type !== 'vehicleApprovalFlow' || data.nonce !== flowNonce) return;
       flowPending = false;
       clearTimeout(flowTimer);
@@ -148,6 +150,10 @@
       stateMessage.style.color = isError ? '#d23f31' : '';
     }
     function newNonce() {
+      if (window.crypto && window.crypto.getRandomValues) {
+        return Array.from(window.crypto.getRandomValues(new Uint8Array(16)), byte =>
+          byte.toString(16).padStart(2, '0')).join('');
+      }
       return 'n' + Date.now().toString(36) + Math.random().toString(36).slice(2, 14);
     }
     function postToBackend(action, data) {
