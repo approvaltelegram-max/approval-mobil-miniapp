@@ -65,8 +65,8 @@
     iframe.addEventListener('load', () => {
       if (!pending) return;
       pending = false;
-      showMessage('Pengajuan sudah dikirim. Pastikan kartu persetujuan muncul di grup.', false, true);
-      button.textContent = 'Terkirim';
+      showMessage('Permintaan sudah diteruskan ke server. Periksa grup untuk memastikan pengajuan berhasil atau melihat alasan jika gagal.');
+      button.textContent = 'Selesai';
       if (tg) setTimeout(() => tg.close(), 2200);
     });
     form.addEventListener('submit', event => {
