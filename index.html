@@ -15,7 +15,7 @@
     .intro { margin: 0 0 18px; color: var(--muted); font-size: 14px; }
     form.card { padding: 18px; border-radius: 16px; background: var(--card); }
     label { display: block; margin: 0 0 14px; font-weight: 600; font-size: 14px; }
-    input, textarea { display: block; width: 100%; margin-top: 6px; padding: 12px; border: 1px solid #ccd3dc; border-radius: 10px; background: var(--bg); color: var(--fg); font: inherit; font-weight: 400; }
+    input, select, textarea { display: block; width: 100%; margin-top: 6px; padding: 12px; border: 1px solid #ccd3dc; border-radius: 10px; background: var(--bg); color: var(--fg); font: inherit; font-weight: 400; }
     textarea { min-height: 84px; resize: vertical; }
     .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
     button { display: block; width: 100%; margin-top: 18px; padding: 14px; border: 0; border-radius: 11px; background: var(--accent); color: var(--tg-theme-button-text-color, #fff); font: inherit; font-weight: 700; }
@@ -38,7 +38,7 @@
       </div>
       <label>Tujuan<input name="destination" maxlength="200" required placeholder="Contoh: Kantor cabang pusat"></label>
       <label>Keperluan<textarea name="purpose" maxlength="1000" required placeholder="Jelaskan keperluan perjalanan"></textarea></label>
-      <label>Mobil yang diminta<input name="car" maxlength="100" required placeholder="Contoh: Avanza hitam"></label>
+      <label>Mobil yang diminta<select id="car" name="car" required disabled><option value="">Memuat daftar mobil...</option></select></label>
       <label>KM Awal<input name="kmAwal" type="number" min="0" step="0.1" required inputmode="decimal" placeholder="Contoh: 12500"></label>
       <button id="submit" type="submit">Kirim Pengajuan</button>
       <p id="message" role="status" aria-live="polite"></p>
@@ -60,6 +60,7 @@
     const message = document.getElementById('message');
     const transport = document.getElementById('transport');
     const iframe = document.getElementById('submit-target');
+    const carSelect = document.getElementById('car');
     transport.action = APPS_SCRIPT_URL;
     let pending = false;
     iframe.addEventListener('load', () => {
@@ -98,6 +99,45 @@
       message.textContent = text || '';
       message.className = isError ? 'error' : (isSuccess ? 'success' : '');
     }
+
+    function loadAvailableCars() {
+      const callbackName = 'onCarList_' + Date.now();
+      const script = document.createElement('script');
+      window[callbackName] = result => {
+        delete window[callbackName];
+        script.remove();
+        carSelect.innerHTML = '';
+        if (!result || !result.ok) {
+          carSelect.disabled = true;
+          carSelect.add(new Option('Daftar mobil gagal dimuat', ''));
+          showMessage(result && result.error ? result.error : 'Daftar mobil gagal dimuat.', true);
+          return;
+        }
+        if (!result.cars || !result.cars.length) {
+          carSelect.disabled = true;
+          carSelect.add(new Option('Belum ada mobil berstatus Aktif', ''));
+          showMessage('Periksa tab DAFTAR_MOBIL dan isi Status dengan “Aktif” untuk mobil yang tersedia.', true);
+          return;
+        }
+        const placeholder = new Option('Pilih mobil dan plat nomor', '', true, true);
+        placeholder.disabled = true;
+        carSelect.add(placeholder);
+        result.cars.forEach(car => carSelect.add(new Option(car.label, car.value)));
+        carSelect.disabled = false;
+      };
+      script.onerror = () => {
+        delete window[callbackName];
+        carSelect.disabled = true;
+        carSelect.innerHTML = '';
+        carSelect.add(new Option('Daftar mobil gagal dimuat', ''));
+        showMessage('Tidak dapat mengambil daftar mobil dari Apps Script. Periksa deployment backend.', true);
+      };
+      script.src = APPS_SCRIPT_URL + '?action=listCars&callback=' +
+        encodeURIComponent('window.' + callbackName) + '&_=' + Date.now();
+      document.head.appendChild(script);
+    }
+
+    loadAvailableCars();
   </script>
 </body>
 </html>
