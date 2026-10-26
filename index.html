@@ -42,7 +42,7 @@
       <label>Mobil yang diminta<select id="car" name="car" required disabled><option value="">Memuat daftar mobil...</option></select></label>
       <label>KM Awal<input id="km-awal" name="kmAwal" type="number" min="0" step="0.1" required inputmode="decimal" readonly placeholder="Pilih mobil terlebih dahulu"></label>
       <small id="km-hint">Pilih mobil untuk mengisi KM Awal.</small>
-      <button id="submit" type="submit">Kirim Pengajuan</button>
+      <button id="submit" type="button">Kirim Pengajuan</button>
     </form>
     <form class="card" id="return-form" hidden>
       <div id="return-choice-wrap" hidden>
@@ -102,6 +102,11 @@
     let flowNonce = '';
     let flowTimer = null;
     let flowPending = false;
+
+    // Bind the primary request button immediately, before the status response
+    // arrives, so its click never depends on form-render timing in Telegram.
+    wireFormSubmit(requestForm, document.getElementById('submit'), 'submitRequest');
+    wireFormSubmit(returnForm, document.getElementById('return-submit'), 'submitReturn');
 
     iframe.addEventListener('load', () => {
       if (flowPending) {
