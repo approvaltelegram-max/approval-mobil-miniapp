@@ -29,9 +29,9 @@
 </head>
 <body>
   <main>
-    <h1>Pengajuan Pemakaian Mobil</h1>
-    <p class="intro">Isi data perjalanan, lalu periksa sebelum dikirim untuk persetujuan.</p>
-    <form class="card" id="request-form">
+    <h1 id="page-title">Pengajuan Pemakaian Mobil</h1>
+    <p class="intro" id="page-intro">Isi data perjalanan, lalu periksa sebelum dikirim untuk persetujuan.</p>
+    <form class="card" id="request-form" hidden>
       <label>Nama pemohon<input name="name" maxlength="100" required autocomplete="name"></label>
       <div class="grid">
         <label>Tanggal mulai<input name="startDate" type="date" required></label>
@@ -43,126 +43,244 @@
       <label>KM Awal<input id="km-awal" name="kmAwal" type="number" min="0" step="0.1" required inputmode="decimal" readonly placeholder="Pilih mobil terlebih dahulu"></label>
       <small id="km-hint">Pilih mobil untuk mengisi KM Awal.</small>
       <button id="submit" type="submit">Kirim Pengajuan</button>
-      <p id="message" role="status" aria-live="polite"></p>
     </form>
-    <iframe name="submit-target" id="submit-target" title="Pengiriman pengajuan" hidden></iframe>
+    <form class="card" id="return-form" hidden>
+      <div id="return-choice-wrap" hidden>
+        <label>Pilih pengajuan yang dikembalikan<select id="return-choice"></select></label>
+      </div>
+      <input type="hidden" name="requestId" id="return-request-id">
+      <label>ID Pengajuan<input id="return-id-display" readonly></label>
+      <label>Nama pemohon<input id="return-name-display" readonly></label>
+      <div class="grid">
+        <label>Tanggal mulai<input id="return-start-date" readonly></label>
+        <label>Jam mulai<input id="return-start-time" readonly></label>
+      </div>
+      <label>Tujuan<input id="return-destination" readonly></label>
+      <label>Keperluan<textarea id="return-purpose" readonly></textarea></label>
+      <label>Mobil<input id="return-car" readonly></label>
+      <label>KM Awal<input id="return-km-awal" readonly></label>
+      <div class="grid">
+        <label>Tanggal selesai<input name="endDate" type="date" required></label>
+        <label>Jam selesai<input name="endTime" type="time" required></label>
+      </div>
+      <label>KM Akhir<input name="kmAkhir" type="number" min="0" step="0.1" required inputmode="decimal" placeholder="Masukkan angka odometer saat kendaraan kembali"></label>
+      <button id="return-submit" type="submit">Kirim Pengembalian</button>
+    </form>
+    <section class="card" id="state-card" hidden><p id="state-message"></p></section>
+    <p id="message" role="status" aria-live="polite"></p>
+    <iframe name="submit-target" id="submit-target" title="Pengiriman form" hidden></iframe>
     <form id="transport" method="post" target="submit-target" hidden>
       <input name="telegramMiniAppAction" value="submitRequest">
       <input name="initData" id="init-data">
       <input name="formData" id="form-data">
+      <input name="nonce" id="request-nonce">
     </form>
   </main>
   <script>
-    // Replace this with the active Apps Script Web App URL ending in /exec.
     const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzEivuD5APPDwc_rIXIxd2I048XQL2banfxV3aohBBWcI13No9G3F1VNBszJ9pFibnLpw/exec';
     const tg = window.Telegram && window.Telegram.WebApp;
     if (tg) { tg.ready(); tg.expand(); }
-    const form = document.getElementById('request-form');
-    const button = document.getElementById('submit');
+    const requestForm = document.getElementById('request-form');
+    const returnForm = document.getElementById('return-form');
+    const stateCard = document.getElementById('state-card');
+    const stateMessage = document.getElementById('state-message');
     const message = document.getElementById('message');
     const transport = document.getElementById('transport');
     const iframe = document.getElementById('submit-target');
     const carSelect = document.getElementById('car');
     const kmAwalInput = document.getElementById('km-awal');
     const kmHint = document.getElementById('km-hint');
+    const actionInput = transport.elements.telegramMiniAppAction;
+    const initDataInput = document.getElementById('init-data');
+    const formDataInput = document.getElementById('form-data');
+    const nonceInput = document.getElementById('request-nonce');
+    const returnChoice = document.getElementById('return-choice');
+    const returnRequests = [];
     transport.action = APPS_SCRIPT_URL;
-    let pending = false;
+    let submissionPending = false;
+    let pendingButton = null;
+    let flowNonce = '';
+    let flowTimer = null;
+
     iframe.addEventListener('load', () => {
-      if (!pending) return;
-      pending = false;
-      showMessage('Permintaan sudah diteruskan ke server. Periksa grup untuk memastikan pengajuan berhasil atau melihat alasan jika gagal.');
-      button.textContent = 'Selesai';
+      if (!submissionPending) return;
+      submissionPending = false;
+      showMessage('Permintaan sudah diteruskan. Periksa grup untuk memastikan proses berhasil atau melihat alasan jika gagal.');
+      if (pendingButton) {
+        pendingButton.disabled = true;
+        pendingButton.textContent = 'Terkirim';
+      }
       if (tg) setTimeout(() => tg.close(), 2200);
     });
-    form.addEventListener('submit', event => {
-      event.preventDefault();
-      if (!tg || !tg.initData) {
-        showMessage('Data Telegram belum diterima. Tutup Mini App, lalu buka lagi lewat tombol Ajukan Pemakaian Mobil di dalam Telegram.', true);
+
+    window.addEventListener('message', event => {
+      if (!iframe.contentWindow || event.source !== iframe.contentWindow) return;
+      const data = event.data;
+      if (!data || data.type !== 'vehicleApprovalFlow' || data.nonce !== flowNonce) return;
+      clearTimeout(flowTimer);
+      if (!data.result || !data.result.ok) {
+        showState(data.result && data.result.error ? data.result.error : 'Status pengajuan tidak dapat dimuat.', true);
         return;
       }
-      if (!tg.initDataUnsafe || !tg.initDataUnsafe.user) {
-        showMessage('Data akun Telegram tidak ditemukan. Tutup lalu buka kembali Mini App dari tombol bot.', true);
-        return;
-      }
-      button.disabled = true;
-      button.textContent = 'Mengirim…';
-      showMessage('');
-      document.getElementById('init-data').value = tg.initData;
-      document.getElementById('form-data').value = JSON.stringify(Object.fromEntries(new FormData(form).entries()));
-      pending = true;
-      transport.submit();
-      setTimeout(() => {
-        if (!pending) return;
-        pending = false;
-        button.disabled = false;
-        button.textContent = 'Kirim Pengajuan';
-        showMessage('Belum ada konfirmasi dari server. Periksa grup sebelum mencoba lagi agar pengajuan tidak terkirim dua kali.', true);
-      }, 12000);
+      renderFlow(data.result.flow || { mode: 'request' });
     });
+
     function showMessage(text, isError, isSuccess) {
       message.textContent = text || '';
       message.className = isError ? 'error' : (isSuccess ? 'success' : '');
+    }
+    function showState(text, isError) {
+      requestForm.hidden = true;
+      returnForm.hidden = true;
+      stateCard.hidden = false;
+      stateMessage.textContent = text;
+      stateMessage.style.color = isError ? '#d23f31' : '';
+    }
+    function newNonce() {
+      return 'n' + Date.now().toString(36) + Math.random().toString(36).slice(2, 14);
+    }
+    function postToBackend(action, data) {
+      actionInput.value = action;
+      initDataInput.value = tg.initData;
+      formDataInput.value = JSON.stringify(data || {});
+      nonceInput.value = newNonce();
+      transport.submit();
+    }
+    function loadUserFlow() {
+      if (!tg || !tg.initData || !tg.initDataUnsafe || !tg.initDataUnsafe.user) {
+        showState('Data akun Telegram tidak diterima. Tutup Mini App, lalu buka kembali melalui tombol menu bot di Telegram.', true);
+        return;
+      }
+      flowNonce = newNonce();
+      actionInput.value = 'getMyFlow';
+      initDataInput.value = tg.initData;
+      formDataInput.value = '';
+      nonceInput.value = flowNonce;
+      stateCard.hidden = false;
+      stateMessage.textContent = 'Memeriksa status pengajuan…';
+      transport.submit();
+      flowTimer = setTimeout(() => showState('Pemeriksaan status terlalu lama. Tutup Mini App dan coba buka kembali.', true), 15000);
+    }
+    function renderFlow(flow) {
+      stateCard.hidden = true;
+      if (flow.mode === 'pending') {
+        const items = flow.requests || [];
+        showState(items.length === 1
+          ? 'Pengajuan ' + items[0].requestId + ' masih menunggu persetujuan. Tombol pengajuan baru akan tersedia setelah keputusan diberikan.'
+          : 'Anda memiliki pengajuan yang masih menunggu persetujuan. Pengajuan baru belum dapat dibuat.', false);
+        return;
+      }
+      if (flow.mode === 'error') {
+        showState(flow.message || 'Status pengajuan belum dapat diproses. Hubungi pengelola.', true);
+        return;
+      }
+      if (flow.mode === 'return' && flow.requests && flow.requests.length) {
+        document.getElementById('page-title').textContent = 'Pengembalian Mobil';
+        document.getElementById('page-intro').textContent = 'Data perjalanan ditampilkan dari pengajuan yang disetujui. Isi hanya tanggal selesai, jam selesai, dan KM Akhir.';
+        requestForm.hidden = true;
+        returnForm.hidden = false;
+        returnRequests.splice(0, returnRequests.length, ...flow.requests);
+        const choiceWrap = document.getElementById('return-choice-wrap');
+        returnChoice.innerHTML = '';
+        if (returnRequests.length > 1) {
+          choiceWrap.hidden = false;
+          returnRequests.forEach((item, index) => returnChoice.add(new Option(item.requestId + ' — ' + item.car, String(index))));
+          returnChoice.addEventListener('change', () => fillReturnDetails(returnRequests[Number(returnChoice.value)]));
+        } else {
+          choiceWrap.hidden = true;
+        }
+        fillReturnDetails(returnRequests[0]);
+        returnForm.addEventListener('submit', event => submitForm(event, returnForm, document.getElementById('return-submit'), 'submitReturn'));
+        return;
+      }
+      document.getElementById('page-title').textContent = 'Pengajuan Pemakaian Mobil';
+      document.getElementById('page-intro').textContent = 'Isi data perjalanan, lalu periksa sebelum dikirim untuk persetujuan.';
+      requestForm.hidden = false;
+      returnForm.hidden = true;
+      requestForm.addEventListener('submit', event => submitForm(event, document.getElementById('submit'), 'submitRequest'));
+      loadAvailableCars();
+    }
+    function fillReturnDetails(item) {
+      if (!item) return;
+      document.getElementById('return-request-id').value = item.requestId;
+      document.getElementById('return-id-display').value = item.requestId;
+      document.getElementById('return-name-display').value = item.name;
+      document.getElementById('return-start-date').value = item.startDate;
+      document.getElementById('return-start-time').value = item.startTime;
+      document.getElementById('return-destination').value = item.destination;
+      document.getElementById('return-purpose').value = item.purpose;
+      document.getElementById('return-car').value = item.car;
+      document.getElementById('return-km-awal').value = item.kmAwal;
+    }
+    function submitForm(event, formElement, buttonElement, action) {
+      event.preventDefault();
+      if (!tg || !tg.initData || !tg.initDataUnsafe || !tg.initDataUnsafe.user) {
+        showMessage('Data Telegram tidak tersedia. Tutup Mini App lalu buka kembali dari tombol menu.', true);
+        return;
+      }
+      buttonElement.disabled = true;
+      buttonElement.textContent = 'Mengirim…';
+      pendingButton = buttonElement;
+      showMessage('');
+      submissionPending = true;
+      postToBackend(action, Object.fromEntries(new FormData(formElement).entries()));
+      setTimeout(() => {
+        if (!submissionPending) return;
+        submissionPending = false;
+        buttonElement.disabled = false;
+        buttonElement.textContent = action === 'submitReturn' ? 'Kirim Pengembalian' : 'Kirim Pengajuan';
+        showMessage('Belum ada konfirmasi dari server. Periksa grup sebelum mencoba lagi agar data tidak terkirim dua kali.', true);
+      }, 15000);
+    }
+
+    const startParam = (tg && tg.initDataUnsafe && tg.initDataUnsafe.start_param) ||
+      (tg && tg.initData ? new URLSearchParams(tg.initData).get('start_param') : '');
+    if (!['flow', 'group', 'private', 'return'].includes(startParam)) {
+      showState('Buka Mini App melalui tombol “🚗 Pengajuan / Pengembalian” di menu bot.', true);
+    } else {
+      loadUserFlow();
     }
 
     function loadAvailableCars() {
       const callbackName = 'onCarList_' + Date.now();
       const script = document.createElement('script');
       window[callbackName] = result => {
-        delete window[callbackName];
-        script.remove();
-        carSelect.innerHTML = '';
-        if (!result || !result.ok) {
+        delete window[callbackName]; script.remove(); carSelect.innerHTML = '';
+        if (!result || !result.ok || !result.cars || !result.cars.length) {
           carSelect.disabled = true;
-          carSelect.add(new Option('Daftar mobil gagal dimuat', ''));
-          showMessage(result && result.error ? result.error : 'Daftar mobil gagal dimuat.', true);
-          return;
-        }
-        if (!result.cars || !result.cars.length) {
-          carSelect.disabled = true;
-          carSelect.add(new Option('Belum ada mobil berstatus Aktif', ''));
-          showMessage('Periksa tab DAFTAR_MOBIL dan isi Status dengan “Aktif” untuk mobil yang tersedia.', true);
+          carSelect.add(new Option('Daftar mobil tidak tersedia', ''));
+          showMessage(result && result.error ? result.error : 'Belum ada mobil aktif pada tab DAFTAR_MOBIL.', true);
           return;
         }
         const placeholder = new Option('Pilih mobil dan plat nomor', '', true, true);
-        placeholder.disabled = true;
-        carSelect.add(placeholder);
+        placeholder.disabled = true; carSelect.add(placeholder);
         result.cars.forEach(car => {
           const option = new Option(car.label, car.value);
-          option.dataset.kmAwal = car.kmAwal === null || car.kmAwal === undefined
-            ? ''
-            : String(car.kmAwal);
+          option.dataset.kmAwal = car.kmAwal === null || car.kmAwal === undefined ? '' : String(car.kmAwal);
           carSelect.add(option);
         });
         carSelect.disabled = false;
       };
       script.onerror = () => {
-        delete window[callbackName];
-        carSelect.disabled = true;
-        carSelect.innerHTML = '';
-        carSelect.add(new Option('Daftar mobil gagal dimuat', ''));
+        delete window[callbackName]; script.remove(); carSelect.disabled = true;
+        carSelect.innerHTML = ''; carSelect.add(new Option('Daftar mobil gagal dimuat', ''));
         showMessage('Tidak dapat mengambil daftar mobil dari Apps Script. Periksa deployment backend.', true);
       };
-      script.src = APPS_SCRIPT_URL + '?action=listCars&callback=' +
-        encodeURIComponent('window.' + callbackName) + '&_=' + Date.now();
+      script.src = APPS_SCRIPT_URL + '?action=listCars&callback=' + encodeURIComponent('window.' + callbackName) + '&_=' + Date.now();
       document.head.appendChild(script);
     }
-
     carSelect.addEventListener('change', () => {
       const option = carSelect.selectedOptions[0];
       const lastKm = option && option.dataset.kmAwal;
       if (lastKm !== undefined && lastKm !== '') {
-        kmAwalInput.value = lastKm;
-        kmAwalInput.readOnly = true;
+        kmAwalInput.value = lastKm; kmAwalInput.readOnly = true;
         kmHint.textContent = 'Terisi otomatis dari KM Akhir terakhir mobil ini.';
       } else {
-        kmAwalInput.value = '';
-        kmAwalInput.readOnly = false;
+        kmAwalInput.value = ''; kmAwalInput.readOnly = false;
         kmAwalInput.placeholder = 'Masukkan KM Awal pertama mobil ini';
         kmHint.textContent = 'Belum ada KM Akhir tercatat untuk mobil ini. Isi KM Awal secara manual satu kali.';
       }
     });
-
-    loadAvailableCars();
   </script>
 </body>
 </html>
