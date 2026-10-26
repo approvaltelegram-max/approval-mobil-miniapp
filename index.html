@@ -66,6 +66,30 @@
       <label>KM Akhir<input name="kmAkhir" type="number" min="0" step="0.1" required inputmode="decimal" placeholder="Masukkan angka odometer saat kendaraan kembali"></label>
       <button id="return-submit" type="submit">Kirim Pengembalian</button>
     </form>
+    <form class="card" id="report-form" hidden>
+      <p class="intro">Pilih format file dan periode laporan. File akan dikirim ke grup.</p>
+      <label>Format laporan
+        <select name="fileFormat" id="report-file-format" required>
+          <option value="xlsx">Excel (.xlsx)</option>
+          <option value="pdf">PDF (.pdf)</option>
+        </select>
+      </label>
+      <label>Jenis rentang
+        <select id="report-range-type" name="rangeType" required>
+          <option value="month">Rentang bulan</option>
+          <option value="date">Rentang tanggal</option>
+        </select>
+      </label>
+      <div class="grid" id="report-month-fields">
+        <label>Bulan awal<input name="startMonth" id="report-start-month" type="month" required></label>
+        <label>Bulan akhir<input name="endMonth" id="report-end-month" type="month" required></label>
+      </div>
+      <div class="grid" id="report-date-fields" hidden>
+        <label>Tanggal awal<input name="startDate" id="report-start-date" type="date"></label>
+        <label>Tanggal akhir<input name="endDate" id="report-end-date" type="date"></label>
+      </div>
+      <button id="report-submit" type="button">Kirim Laporan</button>
+    </form>
     <section class="card" id="state-card" hidden><p id="state-message"></p></section>
     <p id="message" role="status" aria-live="polite"></p>
     <iframe name="submit-target" id="submit-target" title="Pengiriman form" hidden></iframe>
@@ -82,6 +106,7 @@
     if (tg) { tg.ready(); tg.expand(); }
     const requestForm = document.getElementById('request-form');
     const returnForm = document.getElementById('return-form');
+    const reportForm = document.getElementById('report-form');
     const stateCard = document.getElementById('state-card');
     const stateMessage = document.getElementById('state-message');
     const message = document.getElementById('message');
@@ -99,6 +124,7 @@
     transport.action = APPS_SCRIPT_URL;
     let submissionPending = false;
     let pendingButton = null;
+    let pendingAction = '';
     let flowNonce = '';
     let flowTimer = null;
     let flowPending = false;
@@ -107,6 +133,7 @@
     // arrives, so its click never depends on form-render timing in Telegram.
     wireFormSubmit(requestForm, document.getElementById('submit'), 'submitRequest');
     wireFormSubmit(returnForm, document.getElementById('return-submit'), 'submitReturn');
+    wireFormSubmit(reportForm, document.getElementById('report-submit'), 'getReport');
 
     iframe.addEventListener('load', () => {
       if (flowPending) {
@@ -115,7 +142,9 @@
       }
       if (!submissionPending) return;
       submissionPending = false;
-      showMessage('Permintaan sudah diteruskan. Periksa grup untuk memastikan proses berhasil atau melihat alasan jika gagal.');
+      showMessage(pendingAction === 'getReport'
+        ? 'Permintaan laporan diteruskan. Periksa grup untuk menerima file laporan.'
+        : 'Permintaan sudah diteruskan. Periksa grup untuk memastikan proses berhasil atau melihat alasan jika gagal.');
       if (pendingButton) {
         pendingButton.disabled = true;
         pendingButton.textContent = 'Terkirim';
@@ -130,6 +159,7 @@
     function showState(text, isError) {
       requestForm.hidden = true;
       returnForm.hidden = true;
+      reportForm.hidden = true;
       stateCard.hidden = false;
       stateMessage.textContent = text;
       stateMessage.style.color = isError ? '#d23f31' : '';
@@ -280,6 +310,7 @@
       buttonElement.disabled = true;
       buttonElement.textContent = 'Mengirim…';
       pendingButton = buttonElement;
+      pendingAction = action;
       showMessage('');
       submissionPending = true;
       postToBackend(action, Object.fromEntries(new FormData(formElement).entries()));
@@ -287,17 +318,49 @@
         if (!submissionPending) return;
         submissionPending = false;
         buttonElement.disabled = false;
-        buttonElement.textContent = action === 'submitReturn' ? 'Kirim Pengembalian' : 'Kirim Pengajuan';
+        buttonElement.textContent = action === 'submitReturn' ? 'Kirim Pengembalian' :
+          (action === 'getReport' ? 'Kirim Laporan' : 'Kirim Pengajuan');
         showMessage('Belum ada konfirmasi dari server. Periksa grup sebelum mencoba lagi agar data tidak terkirim dua kali.', true);
       }, 15000);
     }
 
     const startParam = (tg && tg.initDataUnsafe && tg.initDataUnsafe.start_param) ||
       (tg && tg.initData ? new URLSearchParams(tg.initData).get('start_param') : '');
-    if (!['flow', 'group', 'private', 'return'].includes(startParam)) {
+    if (startParam === 'report') {
+      document.getElementById('page-title').textContent = 'Tarik Laporan Pemakaian Mobil';
+      document.getElementById('page-intro').textContent = 'Pilih periode laporan yang ingin dikirim ke grup.';
+      requestForm.hidden = true;
+      returnForm.hidden = true;
+      reportForm.hidden = false;
+      initializeReportForm();
+    } else if (!['flow', 'group', 'private', 'return'].includes(startParam)) {
       showState('Buka Mini App melalui tombol “🚗 Pengajuan / Pengembalian” di menu bot.', true);
     } else {
       loadUserFlow();
+    }
+
+    function initializeReportForm() {
+      const now = new Date();
+      const currentMonth = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+      const today = currentMonth + '-' + String(now.getDate()).padStart(2, '0');
+      document.getElementById('report-start-month').value = currentMonth;
+      document.getElementById('report-end-month').value = currentMonth;
+      document.getElementById('report-start-date').value = currentMonth + '-01';
+      document.getElementById('report-end-date').value = today;
+      const type = document.getElementById('report-range-type');
+      const monthFields = document.getElementById('report-month-fields');
+      const dateFields = document.getElementById('report-date-fields');
+      const sync = () => {
+        const useMonth = type.value === 'month';
+        monthFields.hidden = !useMonth;
+        dateFields.hidden = useMonth;
+        document.getElementById('report-start-month').required = useMonth;
+        document.getElementById('report-end-month').required = useMonth;
+        document.getElementById('report-start-date').required = !useMonth;
+        document.getElementById('report-end-date').required = !useMonth;
+      };
+      type.addEventListener('change', sync);
+      sync();
     }
 
     function loadAvailableCars() {
