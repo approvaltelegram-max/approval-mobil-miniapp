@@ -69,7 +69,7 @@
     <section class="card" id="state-card" hidden><p id="state-message"></p></section>
     <p id="message" role="status" aria-live="polite"></p>
     <iframe name="submit-target" id="submit-target" title="Pengiriman form" hidden></iframe>
-    <form id="transport" method="post" target="submit-target" hidden>
+    <form id="transport" method="post" enctype="application/x-www-form-urlencoded" target="submit-target" hidden>
       <input name="telegramMiniAppAction" value="submitRequest">
       <input name="initData" id="init-data">
       <input name="formData" id="form-data">
@@ -105,13 +105,8 @@
 
     iframe.addEventListener('load', () => {
       if (flowPending) {
-        const loadingNonce = flowNonce;
-        setTimeout(() => {
-          if (!flowPending || flowNonce !== loadingNonce) return;
-          flowPending = false;
-          clearTimeout(flowTimer);
-          showState('Apps Script belum mengirim status. Pastikan Code.gs terbaru sudah disimpan dan deploy ulang sebagai versi baru, termasuk izin akses “Anyone”.', true);
-        }, 800);
+        flowPending = false;
+        pollFlowResult(flowNonce, 0);
       }
       if (!submissionPending) return;
       submissionPending = false;
@@ -121,21 +116,6 @@
         pendingButton.textContent = 'Terkirim';
       }
       if (tg) setTimeout(() => tg.close(), 2200);
-    });
-
-    window.addEventListener('message', event => {
-      const data = event.data;
-      // Apps Script may wrap its response in an additional sandbox frame, so
-      // the sender is not always iframe.contentWindow. The one-time nonce
-      // binds the response to this exact request.
-      if (!data || data.type !== 'vehicleApprovalFlow' || data.nonce !== flowNonce) return;
-      flowPending = false;
-      clearTimeout(flowTimer);
-      if (!data.result || !data.result.ok) {
-        showState(data.result && data.result.error ? data.result.error : 'Status pengajuan tidak dapat dimuat.', true);
-        return;
-      }
-      renderFlow(data.result.flow || { mode: 'request' });
     });
 
     function showMessage(text, isError, isSuccess) {
@@ -178,6 +158,45 @@
       stateMessage.textContent = 'Memeriksa status pengajuan…';
       transport.submit();
       flowTimer = setTimeout(() => showState('Pemeriksaan status terlalu lama. Tutup Mini App dan coba buka kembali.', true), 15000);
+    }
+    function pollFlowResult(nonce, attempt) {
+      const callbackName = 'onFlowResult_' + Date.now() + '_' + attempt;
+      const script = document.createElement('script');
+      let finished = false;
+      const cleanup = () => {
+        if (finished) return;
+        finished = true;
+        delete window[callbackName];
+        script.remove();
+      };
+      const retryOrFail = () => {
+        cleanup();
+        if (nonce !== flowNonce) return;
+        if (attempt < 4) {
+          setTimeout(() => pollFlowResult(nonce, attempt + 1), 450 * (attempt + 1));
+        } else {
+          clearTimeout(flowTimer);
+          showState('Permintaan status tidak ditemukan di Apps Script. Pastikan Code.gs terbaru sudah di-deploy dan URL /exec di index.html menunjuk ke deployment itu.', true);
+        }
+      };
+      window[callbackName] = response => {
+        cleanup();
+        if (nonce !== flowNonce) return;
+        if (!response || !response.ready) {
+          retryOrFail();
+          return;
+        }
+        clearTimeout(flowTimer);
+        if (!response.result || !response.result.ok) {
+          showState(response.result && response.result.error ? response.result.error : 'Status pengajuan tidak dapat dimuat.', true);
+          return;
+        }
+        renderFlow(response.result.flow || { mode: 'request' });
+      };
+      script.onerror = retryOrFail;
+      script.src = APPS_SCRIPT_URL + '?action=flowResult&nonce=' + encodeURIComponent(nonce) +
+        '&callback=' + encodeURIComponent('window.' + callbackName) + '&_=' + Date.now();
+      document.head.appendChild(script);
     }
     function renderFlow(flow) {
       stateCard.hidden = true;
