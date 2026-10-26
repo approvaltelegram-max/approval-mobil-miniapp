@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light">
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <title>Pengajuan Pemakaian Mobil</title>
+  <style>
+    :root { --bg: var(--tg-theme-bg-color, #f4f6f8); --fg: var(--tg-theme-text-color, #17212b); --muted: var(--tg-theme-hint-color, #718096); --card: var(--tg-theme-secondary-bg-color, #fff); --accent: var(--tg-theme-button-color, #2481cc); }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 18px 16px 30px; background: var(--bg); color: var(--fg); font: 16px/1.45 system-ui, -apple-system, sans-serif; }
+    main { max-width: 560px; margin: 0 auto; }
+    h1 { margin: 4px 0 6px; font-size: 22px; }
+    .intro { margin: 0 0 18px; color: var(--muted); font-size: 14px; }
+    form.card { padding: 18px; border-radius: 16px; background: var(--card); }
+    label { display: block; margin: 0 0 14px; font-weight: 600; font-size: 14px; }
+    input, textarea { display: block; width: 100%; margin-top: 6px; padding: 12px; border: 1px solid #ccd3dc; border-radius: 10px; background: var(--bg); color: var(--fg); font: inherit; font-weight: 400; }
+    textarea { min-height: 84px; resize: vertical; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+    button { display: block; width: 100%; margin-top: 18px; padding: 14px; border: 0; border-radius: 11px; background: var(--accent); color: var(--tg-theme-button-text-color, #fff); font: inherit; font-weight: 700; }
+    button:disabled { opacity: .55; }
+    #message { margin: 14px 0 0; font-size: 14px; }
+    #message.error { color: #d23f31; }
+    #message.success { color: #16834a; }
+    @media (max-width: 420px) { .grid { grid-template-columns: 1fr; gap: 0; } }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Pengajuan Pemakaian Mobil</h1>
+    <p class="intro">Isi data perjalanan, lalu periksa sebelum dikirim untuk persetujuan.</p>
+    <form class="card" id="request-form">
+      <label>Nama pemohon<input name="name" maxlength="100" required autocomplete="name"></label>
+      <div class="grid">
+        <label>Tanggal mulai<input name="startDate" type="date" required></label>
+        <label>Jam mulai<input name="startTime" type="time" required></label>
+      </div>
+      <label>Tujuan<input name="destination" maxlength="200" required placeholder="Contoh: Kantor cabang pusat"></label>
+      <label>Keperluan<textarea name="purpose" maxlength="1000" required placeholder="Jelaskan keperluan perjalanan"></textarea></label>
+      <label>Mobil yang diminta<input name="car" maxlength="100" required placeholder="Contoh: Avanza hitam"></label>
+      <label>KM Awal<input name="kmAwal" type="number" min="0" step="0.1" required inputmode="decimal" placeholder="Contoh: 12500"></label>
+      <button id="submit" type="submit">Kirim Pengajuan</button>
+      <p id="message" role="status" aria-live="polite"></p>
+    </form>
+    <iframe name="submit-target" id="submit-target" title="Pengiriman pengajuan" hidden></iframe>
+    <form id="transport" method="post" target="submit-target" hidden>
+      <input name="telegramMiniAppAction" value="submitRequest">
+      <input name="initData" id="init-data">
+      <input name="formData" id="form-data">
+    </form>
+  </main>
+  <script>
+    // Replace this with the active Apps Script Web App URL ending in /exec.
+    const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzEivuD5APPDwc_rIXIxd2I048XQL2banfxV3aohBBWcI13No9G3F1VNBszJ9pFibnLpw/exec';
+    const tg = window.Telegram && window.Telegram.WebApp;
+    if (tg) { tg.ready(); tg.expand(); }
+    const form = document.getElementById('request-form');
+    const button = document.getElementById('submit');
+    const message = document.getElementById('message');
+    const transport = document.getElementById('transport');
+    const iframe = document.getElementById('submit-target');
+    transport.action = APPS_SCRIPT_URL;
+    let pending = false;
+    iframe.addEventListener('load', () => {
+      if (!pending) return;
+      pending = false;
+      showMessage('Pengajuan sudah dikirim. Pastikan kartu persetujuan muncul di grup.', false, true);
+      button.textContent = 'Terkirim';
+      if (tg) setTimeout(() => tg.close(), 2200);
+    });
+    form.addEventListener('submit', event => {
+      event.preventDefault();
+      if (!tg || !tg.initData) {
+        showMessage('Data Telegram belum diterima. Tutup Mini App, lalu buka lagi lewat tombol Ajukan Pemakaian Mobil di dalam Telegram.', true);
+        return;
+      }
+      if (!tg.initDataUnsafe || !tg.initDataUnsafe.user) {
+        showMessage('Data akun Telegram tidak ditemukan. Tutup lalu buka kembali Mini App dari tombol bot.', true);
+        return;
+      }
+      button.disabled = true;
+      button.textContent = 'Mengirim…';
+      showMessage('');
+      document.getElementById('init-data').value = tg.initData;
+      document.getElementById('form-data').value = JSON.stringify(Object.fromEntries(new FormData(form).entries()));
+      pending = true;
+      transport.submit();
+      setTimeout(() => {
+        if (!pending) return;
+        pending = false;
+        button.disabled = false;
+        button.textContent = 'Kirim Pengajuan';
+        showMessage('Belum ada konfirmasi dari server. Periksa grup sebelum mencoba lagi agar pengajuan tidak terkirim dua kali.', true);
+      }, 12000);
+    });
+    function showMessage(text, isError, isSuccess) {
+      message.textContent = text || '';
+      message.className = isError ? 'error' : (isSuccess ? 'success' : '');
+    }
+  </script>
+</body>
+</html>
