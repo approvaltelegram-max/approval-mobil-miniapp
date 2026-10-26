@@ -23,6 +23,7 @@
     #message { margin: 14px 0 0; font-size: 14px; }
     #message.error { color: #d23f31; }
     #message.success { color: #16834a; }
+    #km-hint { display: block; margin: -8px 0 14px; color: var(--muted); font-size: 12px; }
     @media (max-width: 420px) { .grid { grid-template-columns: 1fr; gap: 0; } }
   </style>
 </head>
@@ -39,7 +40,8 @@
       <label>Tujuan<input name="destination" maxlength="200" required placeholder="Contoh: Kantor cabang pusat"></label>
       <label>Keperluan<textarea name="purpose" maxlength="1000" required placeholder="Jelaskan keperluan perjalanan"></textarea></label>
       <label>Mobil yang diminta<select id="car" name="car" required disabled><option value="">Memuat daftar mobil...</option></select></label>
-      <label>KM Awal<input name="kmAwal" type="number" min="0" step="0.1" required inputmode="decimal" placeholder="Contoh: 12500"></label>
+      <label>KM Awal<input id="km-awal" name="kmAwal" type="number" min="0" step="0.1" required inputmode="decimal" readonly placeholder="Pilih mobil terlebih dahulu"></label>
+      <small id="km-hint">Pilih mobil untuk mengisi KM Awal.</small>
       <button id="submit" type="submit">Kirim Pengajuan</button>
       <p id="message" role="status" aria-live="polite"></p>
     </form>
@@ -61,6 +63,8 @@
     const transport = document.getElementById('transport');
     const iframe = document.getElementById('submit-target');
     const carSelect = document.getElementById('car');
+    const kmAwalInput = document.getElementById('km-awal');
+    const kmHint = document.getElementById('km-hint');
     transport.action = APPS_SCRIPT_URL;
     let pending = false;
     iframe.addEventListener('load', () => {
@@ -122,7 +126,13 @@
         const placeholder = new Option('Pilih mobil dan plat nomor', '', true, true);
         placeholder.disabled = true;
         carSelect.add(placeholder);
-        result.cars.forEach(car => carSelect.add(new Option(car.label, car.value)));
+        result.cars.forEach(car => {
+          const option = new Option(car.label, car.value);
+          option.dataset.kmAwal = car.kmAwal === null || car.kmAwal === undefined
+            ? ''
+            : String(car.kmAwal);
+          carSelect.add(option);
+        });
         carSelect.disabled = false;
       };
       script.onerror = () => {
@@ -136,6 +146,21 @@
         encodeURIComponent('window.' + callbackName) + '&_=' + Date.now();
       document.head.appendChild(script);
     }
+
+    carSelect.addEventListener('change', () => {
+      const option = carSelect.selectedOptions[0];
+      const lastKm = option && option.dataset.kmAwal;
+      if (lastKm !== undefined && lastKm !== '') {
+        kmAwalInput.value = lastKm;
+        kmAwalInput.readOnly = true;
+        kmHint.textContent = 'Terisi otomatis dari KM Akhir terakhir mobil ini.';
+      } else {
+        kmAwalInput.value = '';
+        kmAwalInput.readOnly = false;
+        kmAwalInput.placeholder = 'Masukkan KM Awal pertama mobil ini';
+        kmHint.textContent = 'Belum ada KM Akhir tercatat untuk mobil ini. Isi KM Awal secara manual satu kali.';
+      }
+    });
 
     loadAvailableCars();
   </script>
